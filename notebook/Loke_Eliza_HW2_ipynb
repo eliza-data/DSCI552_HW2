@@ -1,1 +1,354 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats 
+from pathlib import Path
+from sklearn.linear_model import LinearRegression
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.preprocessing import StandardScaler
 
+#1(a).
+# Directory setup for data files 
+NOTEBOOK_DIR = Path('.').resolve()
+DATA_DIR = NOTEBOOK_DIR / 'CCPP'
+
+#1(b)
+# Load dataframe from Sheet1
+df = pd.read_excel(DATA_DIR / 'Folds5x2_pp.xlsx', sheet_name='Sheet1')
+#print(df.head())
+
+# Check for nuber of rows and columns
+rows, columns = df.shape
+print(f'The dataset has {rows} rows and {columns} columns.')
+
+# Read Readme.txt
+readme_path = DATA_DIR / 'Readme.txt'
+with open(readme_path, 'r') as f:
+  readme_text = f.read()
+
+# Find the end position of the phrase "of the plant." in the Readme.txt
+target_phrase = ' of the plant.'
+end_pos = readme_text.find(target_phrase) + len(target_phrase)
+
+print('\n- Readme Contents -')
+print(readme_text[:end_pos])
+
+# Explicit representation explanation
+print('\n' + '=' * 60)
+print('1(b)i:')
+print(
+    f'Rows ({rows}): Each row represents an hourly average record of operational'
+    ' and environmental data collected from a Combined Cycle Power Plant'
+    ' operating under full load over 6 years (2006–2011).'
+)
+print(f'Columns ({columns}):')
+print('   - AT: Ambient Temperature in °C (Predictor)')
+print('   - V: Exhaust Vacuum in cm Hg (Predictor)')
+print('   - AP: Ambient Pressure in millibar (Predictor)')
+print('   - RH: Relative Humidity in % (Predictor)')
+print(
+    '   - PE: Net hourly Electrical Energy Output in MW (Target Variable)'
+)
+print('=' * 60)
+
+#1(b)ii.
+# Create pairwise scatterplot matrix for all variables
+pairplot_fig = sns.pairplot(
+    df,
+    diag_kind='kde',
+    plot_kws={'alpha': 0.20, 's': 10, 'color': '#4169E1'},
+    diag_kws={'color': '#4169E1', 'fill': True},
+)
+
+pairplot_fig.figure.suptitle(
+    'Pairwise Scatterplots of CCPP Variables', y=1.02, fontsize=12
+)
+plt.show()
+
+#1(b)iii.
+# Calculate mean, median, range, Q1, Q3, and IQR for each variable
+summary_stats = pd.DataFrame({
+    'Mean': df.mean(),
+    'Median': df.median(),
+    'Range': df.max() - df.min(),
+    'First Quartile (Q1)': df.quantile(0.25),
+    'Third Quartile (Q3)': df.quantile(0.75),
+    'Interquartile Range (IQR)': df.quantile(0.75) - df.quantile(0.25)
+})
+
+# Display the summary table rounded to 2 decimal places
+print("=== Section 1(b)iii Summary Statistics ===")
+display(summary_stats.round(2))
+
+#1c. 
+### Plots to visualize the regression lines and residuals for each predictor variable ###
+
+predictors = ['AT', 'V', 'AP', 'RH']
+response = 'PE'
+
+# Prepare a plot grid for regression lines & residuals
+fig, axes = plt.subplots(len(predictors), 2, figsize=(12, 16))
+
+for i, p in enumerate(predictors):
+    # 1. Fit Linear Regression using scipy or statsmodels
+    slope, intercept, r_value, p_value, std_err = stats.linregress(df[p], df[response])
+    
+    print(f"--- Predictor: {p} ---")
+    print(f"  Intercept: {intercept:.4f}, Slope: {slope:.4f}")
+    print(f"  R-squared: {r_value**2:.4f}, p-value: {p_value:.2e}")
+    
+    # Check statistical significance
+    sig = "Statistically Significant" if p_value < 0.05 else "Not Statistically Significant"
+    print(f"  Association: {sig}\n")
+
+    # 2. Scatter plot with regression line
+    sns.regplot(x=df[p], y=df[response], ax=axes[i, 0], 
+                line_kws={'color': 'red'}, scatter_kws={'alpha': 0.3})
+    axes[i, 0].set_title(f'{p} vs {response}')
+    
+    # 3. Residual plot to inspect for outliers and non-linearity
+    X = sm.add_constant(df[p])
+    model = sm.OLS(df[response], X).fit()
+    residuals = model.resid
+    
+    # Standardized residuals for outlier detection (|std_res| > 3 indicates potential outlier)
+    std_residuals = model.get_influence().resid_studentized_internal
+    outliers = df[np.abs(std_residuals) > 3.5]
+    print(f"  Potential Outliers (|std residual| > 3.5): {len(outliers)} points\n")
+
+    axes[i, 1].scatter(df[p], std_residuals, alpha=0.3)
+    axes[i, 1].axhline(y=3, color='r', linestyle='--')
+    axes[i, 1].axhline(y=-3, color='r', linestyle='--')
+    axes[i, 1].set_title(f'{p} Residuals vs Fitted')
+    axes[i, 1].set_ylabel('Standardized Residuals')
+
+plt.tight_layout()
+plt.show()
+
+#1(d).
+# Define independent variables (predictors) and dependent variable (response)
+X = df[['AT', 'V', 'AP', 'RH']]
+X = sm.add_constant(X)  # Adds the intercept (beta_0) term
+y = df['PE']
+
+# Fit Multiple Linear Regression model
+multiple_model = sm.OLS(y, X).fit()
+
+# Display complete summary table
+print(multiple_model.summary())
+
+#1.e.
+# Extract Univariate Coefficients (1c) 
+simple_coefs = {
+    p: sm.OLS(df[response], sm.add_constant(df[p])).fit().params[p] 
+    for p in predictors
+}
+
+# 2. Extract Multiple Regression Coefficients (1d)
+multi_model = sm.OLS(df[response], sm.add_constant(df[predictors])).fit()
+multi_coefs = multi_model.params.drop('const').to_dict()
+
+# 3. Combine into a DataFrame for plotting or inspection
+df_coefs = pd.DataFrame({
+    'Univariate': simple_coefs,
+    'Multiple': multi_coefs
+})
+
+print(df_coefs)
+
+#1.e.
+### Plot univariate regression coeﬃcients from 1c on the x-axis, and the multiple regression coeﬃcients from 1d on the y-axis. ###
+
+plt.figure(figsize=(8, 6))
+
+# Plot points directly from df_coefs
+plt.scatter(df_coefs['Univariate'], df_coefs['Multiple'], color='blue', s=80, zorder=5)
+
+# Annotate each point with its feature name
+for feature in df_coefs.index:
+    plt.annotate(
+        feature, 
+        (df_coefs.loc[feature, 'Univariate'], df_coefs.loc[feature, 'Multiple']),
+        textcoords="offset points", 
+        xytext=(8, 5), 
+        ha='left', 
+        fontsize=11, 
+        weight='bold'
+    )
+
+# Add reference line y = x (where univariate equals multiple coefficient)
+min_val = min(df_coefs.min()) - 0.5
+max_val = max(df_coefs.max()) + 0.5
+plt.plot([min_val, max_val], [min_val, max_val], 'r--', label='y = x (No Change)')
+
+# Reference axis lines at zero
+plt.axhline(0, color='gray', linewidth=0.8, linestyle=':')
+plt.axvline(0, color='gray', linewidth=0.8, linestyle=':')
+
+plt.title('Univariate vs. Multiple Regression Coefficients', fontsize=14, pad=12)
+plt.xlabel('Univariate Regression Coefficients (1c)', fontsize=12)
+plt.ylabel('Multiple Regression Coefficients (1d)', fontsize=12)
+plt.grid(True, linestyle='--', alpha=0.5)
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+#1.f.
+### Fit polynomial model (Y = b0 + b1*X + b2*X^2 + b3*X^3) for each predictor ###
+
+poly_models = {}
+
+# Fit polynomial model (Y = b0 + b1*X + b2*X^2 + b3*X^3) for each predictor
+for p in predictors:
+    formula = f"PE ~ {p} + I({p}**2) + I({p}**3)"
+    model = smf.ols(formula, data=df).fit()
+    poly_models[p] = model
+    
+    print(f"==================== Polynomial Model for {p} ====================")
+    print(model.summary())
+    print("\n")
+
+# 1(g).
+# Fit full linear regression model with all pairwise interaction terms
+# The syntax '(AT + V + AP + RH)**2' automatically includes all 4 main effects + 6 pairwise interactions
+interaction_terms = smf.ols("PE ~ (AT + V + AP + RH)**2", data=df).fit()
+
+# Print the regression summary
+print(interaction_terms.summary())
+
+#1(h).
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+# MODEL 1: Baseline (Main Effects)
+m1 = LinearRegression().fit(X_train, y_train)
+
+m1_train_mse = mean_squared_error(y_train, m1.predict(X_train))
+m1_test_mse = mean_squared_error(y_test, m1.predict(X_test))
+
+# MODEL 2: All Degree-2 Terms (Interactions + Quadratics)
+poly = PolynomialFeatures(degree=2, include_bias=False)
+X_train_poly = poly.fit_transform(X_train)
+X_test_poly = poly.transform(X_test)
+
+m2 = LinearRegression().fit(X_train_poly, y_train)
+
+m2_train_mse = mean_squared_error(y_train, m2.predict(X_train_poly))
+m2_test_mse = mean_squared_error(y_test, m2.predict(X_test_poly))
+
+# Print Results
+print(f"Model 1 - Train MSE: {m1_train_mse:.4f} | Test MSE: {m1_test_mse:.4f}")
+print(f"Model 2 - Train MSE: {m2_train_mse:.4f} | Test MSE: {m2_test_mse:.4f}")
+
+#1(i).
+
+#### KNN Regression with and without Feature Scaling ###
+X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42)
+
+# Scale features
+scaler = StandardScaler()
+X_tr_s = scaler.fit_transform(X_tr)
+X_te_s = scaler.transform(X_te)
+
+# Pre-allocate arrays for metrics
+k_range = np.arange(1, 101)
+raw_tr_mse, raw_te_mse = np.zeros(100), np.zeros(100)
+scl_tr_mse, scl_te_mse = np.zeros(100), np.zeros(100)
+
+# Train and Evaluate
+for idx, k in enumerate(k_range):
+    # Raw KNN
+    knn_raw = KNeighborsRegressor(n_neighbors=k).fit(X_tr, y_tr)
+    raw_tr_mse[idx] = mean_squared_error(y_tr, knn_raw.predict(X_tr))
+    raw_te_mse[idx] = mean_squared_error(y_te, knn_raw.predict(X_te))
+    
+    # Scaled KNN
+    knn_scl = KNeighborsRegressor(n_neighbors=k).fit(X_tr_s, y_tr)
+    scl_tr_mse[idx] = mean_squared_error(y_tr, knn_scl.predict(X_tr_s))
+    scl_te_mse[idx] = mean_squared_error(y_te, knn_scl.predict(X_te_s))
+
+# Best k values
+best_k_raw = k_range[np.argmin(raw_te_mse)]
+best_k_scl = k_range[np.argmin(scl_te_mse)]
+
+print(f"Optimal k (Raw): k = {best_k_raw} | Test MSE: {raw_te_mse.min():.4f}")
+print(f"Optimal k (Normalized): k = {best_k_scl} | Test MSE: {scl_te_mse.min():.4f}")
+
+#1.(i)
+### Plot the train and test errors in terms of 1/k. ### 
+
+# Calculate 1/k values (Flexibility)
+inv_k = 1 / k_range
+
+# Create side-by-side plots for Raw and Scaled (Normalized) Features
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# - Plot 1: Raw Features -
+axes[0].plot(inv_k, raw_tr_mse, label='Train Error (MSE)', color='blue', linewidth=2)
+axes[0].plot(inv_k, raw_te_mse, label='Test Error (MSE)', color='red', linewidth=2)
+axes[0].axvline(1 / best_k_raw, color='green', linestyle='--', label=f'Best k = {best_k_raw} (1/k = {1/best_k_raw:.3f})')
+axes[0].set_title('KNN Regression: Raw Features', fontsize=12, fontweight='bold')
+axes[0].set_xlabel('Model Flexibility (1 / k)', fontsize=11)
+axes[0].set_ylabel('Mean Squared Error (MSE)', fontsize=11)
+axes[0].grid(True, linestyle='--', alpha=0.5)
+axes[0].legend()
+
+# - Plot 2: Normalized Features -
+axes[1].plot(inv_k, scl_tr_mse, label='Train Error (MSE)', color='blue', linewidth=2)
+axes[1].plot(inv_k, scl_te_mse, label='Test Error (MSE)', color='red', linewidth=2)
+axes[1].axvline(1 / best_k_scl, color='green', linestyle='--', label=f'Best k = {best_k_scl} (1/k = {1/best_k_scl:.3f})')
+axes[1].set_title('KNN Regression: Normalized Features', fontsize=12, fontweight='bold')
+axes[1].set_xlabel('Model Flexibility (1 / k)', fontsize=11)
+axes[1].set_ylabel('Mean Squared Error (MSE)', fontsize=11)
+axes[1].grid(True, linestyle='--', alpha=0.5)
+axes[1].legend()
+
+plt.tight_layout()
+plt.show()
+
+#1(j)
+#### Summary Table of Model Performance ###
+best_raw_knn_mse = raw_te_mse.min()
+best_scl_knn_mse = scl_te_mse.min()
+
+summary_table = pd.DataFrame([
+    {
+        'Category': 'Linear Models',
+        'Model Name': 'Main Effects Only (1d)',
+        'Best Hyperparameter': 'N/A',
+        'Test MSE': m1_test_mse
+    },
+    {
+        'Category': 'Linear Models',
+        'Model Name': 'Interactions + Quadratics (1h)',
+        'Best Hyperparameter': 'p < 0.05 terms',
+        'Test MSE': m2_test_mse
+    },
+    {
+        'Category': 'KNN',
+        'Model Name': 'KNN (Raw Features)',
+        'Best Hyperparameter': f'k = {best_k_raw}',
+        'Test MSE': best_raw_knn_mse
+    },
+    {
+        'Category': 'KNN',
+        'Model Name': 'KNN (Normalized Features)',
+        'Best Hyperparameter': f'k = {best_k_scl}',
+        'Test MSE': best_scl_knn_mse
+    }
+])
+
+# Identify lowest Test MSE programmatically
+best_model_row = summary_table.loc[summary_table['Test MSE'].idxmin()]
+
+print("--- SUMMARY TABLE ---")
+print(summary_table.to_string(index=False))
+print("\n--- TOP PERFORMING MODEL ---")
+print(f"Model: {best_model_row['Model Name']} ({best_model_row['Best Hyperparameter']})")
+print(f"Lowest Test MSE: {best_model_row['Test MSE']:.4f}")
